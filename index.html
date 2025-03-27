@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DFP Ad Tag Parser</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        textarea {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box; /* Prevents padding from adding to width */
+            min-height: 100px;
+        }
+        button {
+            display: inline-block;
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #results {
+            margin-top: 20px;
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #ced4da;
+        }
+        #results h2 {
+            margin-top: 0;
+            color: #495057;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
+        }
+        .param-item {
+            margin-bottom: 10px;
+            word-wrap: break-word; /* Ensure long values wrap */
+        }
+        .param-key {
+            font-weight: bold;
+            color: #17a2b8;
+        }
+        .param-value {
+            margin-left: 5px;
+            color: #333;
+        }
+        .sub-params {
+            margin-left: 20px;
+            border-left: 2px solid #ccc;
+            padding-left: 10px;
+            margin-top: 5px;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .segment-header {
+            margin-top: 20px;
+            font-weight: bold;
+            color: #007bff;
+            border-bottom: 1px dotted #ccc;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+        .nested-param {
+            background-color: #f8f9fa;
+            border-left: 3px solid #28a745;
+            margin-top: 8px;
+            padding: 8px;
+            border-radius: 0 4px 4px 0;
+        }
+        .nested-param-header {
+            font-weight: bold;
+            color: #28a745;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DFP Ad Tag Parser</h1>
+
+        <label for="adTagUrl">Enter DFP Ad Tag URL or Query Parameters:</label>
+        <textarea id="adTagUrl" rows="5" placeholder="Paste your DFP ad tag URL, query parameters, or network request payload..."></textarea>
+
+        <button onclick="parseAdTag()">Parse URL</button>
+        <button onclick="clearAll()">Clear</button>
+
+        <div id="results" style="display: none;">
+            <h2>Parsed Parameters:</h2>
+            <div id="output"></div>
+            <button onclick="copyResults()" id="copyButton" style="display: none; margin-top: 15px;">Copy Results</button>
+        </div>
+        <div id="error-message" class="error"></div>
+    </div>
+
+    <script>
+        /**
+         * Function: parseAdTag
+         * Description: Main function to parse the input, whether it's a full URL or just query parameters.
+         * It automatically detects the input format and processes accordingly.
+         */
+        function parseAdTag() {
+            const userInput = document.getElementById('adTagUrl').value.trim();
+            const outputDiv = document.getElementById('output');
+            const resultsDiv = document.getElementById('results');
+            const errorDiv = document.getElementById('error-message');
+            const copyButton = document.getElementById('copyButton');
+
+            outputDiv.innerHTML = '';
+            errorDiv.textContent = '';
+            resultsDiv.style.display = 'none';
+            copyButton.style.display = 'none';
+
+            if (!userInput) {
+                errorDiv.textContent = 'Please enter an ad tag URL or query parameters.';
+                return;
+            }
+
+            // Check if we have multiple ad positions separated by '|pos='
+            const adPositions = splitByAdPositions(userInput);
+            
+            if (adPositions.length > 1) {
+                // Process multiple ad positions
+                let allOutputHTML = '';
+                let allTextToCopy = '';
+                
+                adPositions.forEach((positionData, index) => {
+                    const { html, text } = processInputSegment(positionData, `Position ${index + 1}`);
+                    allOutputHTML += html;
+                    allTextToCopy += text + '\n\n';
+                });
+                
+                outputDiv.innerHTML = allOutputHTML;
+                resultsDiv.style.display = 'block';
+                copyButton.style.display = 'inline-block';
+                copyButton.dataset.copyText = allTextToCopy.trim();
+            } else {
+                // Process single input (URL or query parameters)
+                const { html, text } = processInputSegment(userInput);
+                outputDiv.innerHTML = html;
+                
+                if (html) {
+                    resultsDiv.style.display = 'block';
+                    copyButton.style.display = 'inline-block';
+                    copyButton.dataset.copyText = text.trim();
+                }
+            }
+        }
+
+        /**
+         * Function: splitByAdPositions
+         * Description: Splits input by '|pos=' which typically indicates separate ad positions
+         * in concatenated query parameters.
+         * @param {string} input - The raw input string
+         * @returns {Array} - Array of individual ad position parameter strings
+         */
+        function splitByAdPositions(input) {
+            // Special handling for the pattern "|pos=" which often separates ad positions
+            if (input.includes('|pos=')) {
+                const positions = [];
+                let segments = input.split('|pos=');
+                
+                // First segment doesn't have a 'pos=' prefix
+                positions.push(segments[0]);
+                
+                // For the rest, add the 'pos=' back since it was removed in the split
+                for (let i = 1; i < segments.length; i++) {
+                    positions.push('pos=' + segments[i]);
+                }
+                return positions;
+            }
+            
+            return [input]; // Return as single-item array if no splits found
+        }
+
+        // List of parameters that might contain nested query strings
+        const NESTED_PARAMS = ['prev_scp', 'cust_params', 'description_url', 'pp'];
+        
+        /**
+         * Function: processInputSegment
+         * Description: Processes a single input segment, which could be a full URL or just query parameters.
+         * Detects the format and processes accordingly.
+         * @param {string} input - The input string to process
+         * @param {string} titlePrefix - Optional prefix for the segment title (for multiple positions)
+         * @returns {Object} - Object containing HTML output and plain text for copying
+         */
+        function processInputSegment(input, titlePrefix = '') {
+            let outputHTML = '';
+            let textToCopy = '';
+            
+            // Add section header if we're processing multiple segments
+            if (titlePrefix) {
+                outputHTML += `<div class="segment-header">${titlePrefix}</div>`;
+                textToCopy += `--- ${titlePrefix} ---\n`;
+            }
+
+            try {
+                let isCompleteUrl = false;
+                let url;
+                let params;
+
+                // Check if it's a complete URL (starts with http:// or https://)
+                if (input.match(/^https?:\/\//i)) {
+                    isCompleteUrl = true;
+                    url = new URL(input);
+                    params = url.searchParams;
+                } else {
+                    // It's query parameters, construct a dummy URL to use URLSearchParams
+                    try {
+                        // First, check if it starts with a question mark
+                        const queryString = input.startsWith('?') ? input : '?' + input;
+                        // Use URLSearchParams directly
+                        params = new URLSearchParams(queryString);
+                    } catch (e) {
+                        throw new Error("Invalid query parameters format. Please check your input.");
+                    }
+                }
+
+                // If it's a complete URL, add hostname and pathname info
+                if (isCompleteUrl) {
+                    outputHTML += `<div class="param-item"><span class="param-key">Hostname:</span> <span class="param-value">${url.hostname}</span></div>`;
+                    outputHTML += `<div class="param-item"><span class="param-key">Pathname:</span> <span class="param-value">${url.pathname}</span></div>`;
+                    textToCopy += `Hostname: ${url.hostname}\nPathname: ${url.pathname}\n\n`;
+                }
+
+                textToCopy += `--- Parameters ---\n`;
+
+                // Process each parameter
+                params.forEach((value, key) => {
+                    const decodedKey = decodeURIComponent(key);
+                    const decodedValue = decodeURIComponent(value);
+                    textToCopy += `${decodedKey}: ${decodedValue}\n`;
+
+                    outputHTML += `<div class="param-item">`;
+                    outputHTML += `<span class="param-key">${decodedKey}:</span> `;
+
+                    // Special handling for the 't' parameter (custom targeting)
+                    if (decodedKey === 't') {
+                        outputHTML += parseCustomTargeting(decodedValue);
+                        const tParams = parseCustomTargetingToText(decodedValue);
+                        if (tParams) {
+                            textToCopy += tParams;
+                        }
+                    }
+                    // Special handling for the 'sz' parameter (sizes)
+                    else if (decodedKey === 'sz') {
+                        outputHTML += parseSizes(decodedValue);
+                        const szParams = parseSizesToText(decodedValue);
+                        if (szParams) {
+                            textToCopy += szParams;
+                        }
+                    }
+                    // Handle other potential nested parameters
+                    else if (NESTED_PARAMS.includes(decodedKey) || looksLikeQueryString(decodedValue)) {
+                        const nestedResult = parseNestedParam(decodedValue, decodedKey);
+                        outputHTML += nestedResult.html;
+                        if (nestedResult.text) {
+                            textToCopy += nestedResult.text;
+                        }
+                    }
+                    else {
+                        // Only show the value if it's not a nested parameter
+                        outputHTML += `<span class="param-value">${decodedValue}</span>`;
+                    }
+
+                    outputHTML += `</div>`;
+                });
+
+                if (outputHTML === '') {
+                    outputHTML = '<p>No parameters found in the input.</p>';
+                    textToCopy += 'No parameters found.\n';
+                }
+
+                return { html: outputHTML, text: textToCopy };
+
+            } catch (error) {
+                console.error("Parsing error:", error);
+                document.getElementById('error-message').textContent = error.message || 'Error parsing input. Please check the format.';
+                return { html: '', text: '' };
+            }
+        }
+
+        /**
+         * Function: parseCustomTargeting
+         * Description: Parses the value of the 't' parameter (custom targeting).
+         * @param {string} tValue - The raw value of the 't' parameter.
+         * @returns {string} - HTML string representing the parsed key-value pairs.
+         */
+        function parseCustomTargeting(tValue) {
+            if (!tValue) return '';
+            let subHTML = '<div class="sub-params">';
+            try {
+                const pairs = tValue.split('&');
+                pairs.forEach(pair => {
+                    if (pair) {
+                        const [key, ...valParts] = pair.split('=');
+                        const value = valParts.join('=');
+                        if (key) {
+                            subHTML += `<div class="param-item"><span class="param-key">${decodeURIComponent(key)}:</span> <span class="param-value">${decodeURIComponent(value || '')}</span></div>`;
+                        }
+                    }
+                });
+            } catch (e) {
+                console.error("Error parsing 't' parameter:", e);
+                subHTML += `<div class="error">Error parsing custom targeting</div>`;
+            }
+            subHTML += '</div>';
+            return subHTML;
+        }
+
+        /**
+         * Function: parseCustomTargetingToText
+         * Description: Parses the 't' parameter value into a plain text format for copying.
+         * @param {string} tValue - The raw value of the 't' parameter.
+         * @returns {string} - Plain text string of parsed key-value pairs.
+         */
+        function parseCustomTargetingToText(tValue) {
+            if (!tValue) return '';
+            let text = '';
+            try {
+                const pairs = tValue.split('&');
+                pairs.forEach(pair => {
+                    if (pair) {
+                        const [key, ...valParts] = pair.split('=');
+                        const value = valParts.join('=');
+                        if (key) {
+                            text += `  - ${decodeURIComponent(key)}: ${decodeURIComponent(value || '')}\n`;
+                        }
+                    }
+                });
+            } catch (e) {
+                text += `  - Error parsing custom targeting\n`;
+            }
+            return text;
+        }
+
+        /**
+         * Function: parseSizes
+         * Description: Parses the value of the 'sz' parameter (sizes).
+         * @param {string} szValue - The raw value of the 'sz' parameter.
+         * @returns {string} - HTML string representing the parsed sizes.
+         */
+        function parseSizes(szValue) {
+            if (!szValue) return '';
+            const sizes = szValue.split(/[|,]/);
+            if (sizes.length <= 1 && !sizes[0].includes('x')) return '';
+
+            let subHTML = '<div class="sub-params">';
+            sizes.forEach(size => {
+                if (size.trim()) {
+                    subHTML += `<div class="param-item"><span class="param-value">${size.trim()}</span></div>`;
+                }
+            });
+            subHTML += '</div>';
+            return subHTML;
+        }
+
+        /**
+         * Function: parseSizesToText
+         * Description: Parses the 'sz' parameter value into a plain text format for copying.
+         * @param {string} szValue - The raw value of the 'sz' parameter.
+         * @returns {string} - Plain text string of parsed sizes.
+         */
+        function parseSizesToText(szValue) {
+            if (!szValue) return '';
+            const sizes = szValue.split(/[|,]/);
+            if (sizes.length <= 1 && !sizes[0].includes('x')) return '';
+
+            let text = '';
+            sizes.forEach(size => {
+                if (size.trim()) {
+                    text += `  - ${size.trim()}\n`;
+                }
+            });
+            return text;
+        }
+
+        /**
+         * Function: clearAll
+         * Description: Clears the input textarea, the results area, and any error messages.
+         * Triggered by the "Clear" button.
+         */
+        function clearAll() {
+            document.getElementById('adTagUrl').value = '';
+            document.getElementById('output').innerHTML = '';
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('error-message').textContent = '';
+            document.getElementById('copyButton').style.display = 'none';
+        }
+
+        /**
+         * Function: copyResults
+         * Description: Copies the formatted plain text results to the clipboard.
+         * Uses the Clipboard API for modern browsers.
+         * Triggered by the "Copy Results" button.
+         */
+        function copyResults() {
+            const copyButton = document.getElementById('copyButton');
+            const textToCopy = copyButton.dataset.copyText;
+
+            if (navigator.clipboard && textToCopy) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    const originalText = copyButton.textContent;
+                    copyButton.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyButton.textContent = originalText;
+                    }, 1500);
+                }).catch(err => {
+                    console.error('Failed to copy text: ', err);
+                    alert('Failed to copy results to clipboard.');
+                });
+            } else {
+                alert('Copying to clipboard is not supported or failed.');
+            }
+        }
+
+        /**
+         * Function: looksLikeQueryString
+         * Description: Checks if a string looks like it might be a query string
+         * @param {string} str - The string to check
+         * @returns {boolean} - True if the string looks like a query string
+         */
+        function looksLikeQueryString(str) {
+            // Check if string contains key=value pairs separated by & or ;
+            return /[?&][^=]+=.*?(&|$)/.test(str) || 
+                   (/[^=]+=.*?(?:&|$)/.test(str) && str.includes('&') && !str.includes(' '));
+        }
+
+        /**
+         * Function: parseNestedParam
+         * Description: Attempts to parse a value that might contain nested parameters
+         * @param {string} value - The value to parse
+         * @param {string} paramName - The name of the parameter containing this value
+         * @returns {Object} - Object with HTML and text representations
+         */
+        function parseNestedParam(value, paramName) {
+            if (!value) return { html: '', text: '' };
+            
+            let nestedHTML = '';
+            let nestedText = '';
+            
+            try {
+                // If value starts with http/https but doesn't look like a complete URL
+                // it may be a URL with query parameters
+                let paramString = value;
+                
+                // If it's a URL, extract the query string
+                if (value.match(/^https?:\/\//i)) {
+                    try {
+                        const url = new URL(value);
+                        if (url.search) {
+                            paramString = url.search.substring(1); // Remove the leading ?
+                        } else {
+                            return { html: '', text: '' }; // No query params in URL
+                        }
+                    } catch (e) {
+                        // Not a valid URL, try to extract query part manually
+                        const queryStart = value.indexOf('?');
+                        if (queryStart !== -1) {
+                            paramString = value.substring(queryStart + 1);
+                        }
+                    }
+                }
+                
+                // Common patterns for nested params
+                // 1. Standard URL query: key=value&key2=value2
+                // 2. Semicolon separated: key=value;key2=value2
+                let separator = '&';
+                if (paramString.includes(';') && !paramString.includes('&')) {
+                    separator = ';';
+                }
+                
+                const pairs = paramString.split(separator);
+                if (pairs.length > 1 || (pairs.length === 1 && pairs[0].includes('='))) {
+                    nestedHTML = `<div class="nested-param">`;
+                    nestedHTML += `<div class="nested-param-header">Nested Parameters in ${paramName}:</div>`;
+                    nestedText = `  Nested Parameters in ${paramName}:\n`;
+                    
+                    pairs.forEach(pair => {
+                        if (pair && pair.includes('=')) {
+                            const [key, ...valueParts] = pair.split('=');
+                            const pairValue = valueParts.join('=');
+                            
+                            if (key) {
+                                try {
+                                    const decodedKey = decodeURIComponent(key.trim());
+                                    const decodedValue = decodeURIComponent(pairValue.trim() || '');
+                                    
+                                    nestedHTML += `<div class="param-item">
+                                        <span class="param-key">${decodedKey}:</span> 
+                                        <span class="param-value">${decodedValue}</span>
+                                    </div>`;
+                                    
+                                    nestedText += `    - ${decodedKey}: ${decodedValue}\n`;
+                                } catch (e) {
+                                    // If decoding fails, use raw values
+                                    nestedHTML += `<div class="param-item">
+                                        <span class="param-key">${key.trim()}:</span> 
+                                        <span class="param-value">${pairValue.trim() || ''}</span>
+                                    </div>`;
+                                    
+                                    nestedText += `    - ${key.trim()}: ${pairValue.trim() || ''}\n`;
+                                }
+                            }
+                        }
+                    });
+                    
+                    nestedHTML += `</div>`;
+                }
+            } catch (e) {
+                console.error("Error parsing nested parameter:", e);
+                return { html: '', text: '' };
+            }
+            
+            return { html: nestedHTML, text: nestedText };
+        }
+    </script>
+</body>
+</html> 
